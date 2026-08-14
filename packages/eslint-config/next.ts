@@ -6,14 +6,13 @@ import pluginReactHooks from "eslint-plugin-react-hooks";
 import pluginReact from "eslint-plugin-react";
 import globals from "globals";
 import pluginNext from "@next/eslint-plugin-next";
-import { config as baseConfig } from "./base.js";
+import { config as baseConfig } from "./base";
+import type { Linter } from "eslint";
 
 /**
  * A custom ESLint configuration for libraries that use Next.js.
- *
- * @type {import("eslint").Linter.Config[]}
- * */
-export const nextJsConfig = [
+ */
+export const nextJsConfig: Linter.Config[] = [
   ...baseConfig,
   js.configs.recommended,
   eslintConfigPrettier,
@@ -26,9 +25,9 @@ export const nextJsConfig = [
     "next-env.d.ts",
   ]),
   {
-    ...pluginReact.configs.flat.recommended,
+    ...pluginReact.configs.flat.recommended!,
     languageOptions: {
-      ...pluginReact.configs.flat.recommended.languageOptions,
+      ...pluginReact.configs.flat.recommended!.languageOptions,
       globals: {
         ...globals.serviceworker,
       },
