@@ -1,159 +1,102 @@
-# Turborepo starter
+# Reflex
 
-This Turborepo starter is maintained by the Turborepo core team.
+Event-driven workflow automation with **full execution observability and one-click replay** — Zapier-class trigger/action engine, but built around the failure case Zapier handles poorly: *you don't know what happened, and you can't re-run it.*
 
-## Using this example
+## Why this exists
 
-Run the following command:
+Zapier is a black box when things fail. You get a vague "this zap failed" email, no visibility into what payload flowed through each step, and no way to replay a failed run with the exact same input.
 
-```sh
-npx create-turbo@latest
+Reflex is built so that failure is the primary UI. Every workflow run produces a **visual trace** — what payload came in, what each step transformed it to, where it broke — plus **one-click replay** of any run with the exact same payload. That turns debugging integrations from guesswork into inspection.
+
+## Core scope
+
+**Engine (the hard part):**
+
+| Piece | Details |
+|---|---|
+| Triggers | Webhook, schedule (cron), form submit |
+| Actions | HTTP request, Slack/Discord message, email |
+| Execution engine | Event-driven `Trigger → Action` DAGs with a queue + worker pool (a scoped distributed job runner) |
+| Reliability | Retries with exponential backoff, idempotency keys, dead-letter handling |
+
+**Differentiator (the part Zapier doesn't do well):**
+
+- **Execution observability** — full trace per run: input payload, each step's transformed output, timings, failure points.
+- **Replay** — re-run any completed/failed run with the exact stored payload. No regenerating the trigger; replay the data as it actually flowed.
+
+**Nice-to-haves on the roadmap:** dry-run mode (simulate a trigger with a mock payload against live workflows), sandboxed custom code steps.
+
+## Architecture
+
+```
+                ┌──────────────────────────────────────────────┐
+                │                    API layer                 │
+                │   (workflow CRUD · run history · OAuth)      │
+                └──────────────┬───────────────────────────────┘
+                               │
+   webhook ──► ┌───────────────▼───────────────┐
+   schedule ──►│        Trigger service        │──► ┌──────────────────────┐
+   form    ──► │   (validate, enrich, dedupe)  │──► │   Job queue (Redis)  │
+               └───────────────────────────────┘    │  (idempotency keys) │
+                                                    └──────────┬───────────┘
+                                                               ▼
+                                                     ┌──────────────────────┐
+                                                     │     Workers          │
+                                                     │  execute step DAGs,  │
+                                                     │  retry w/ backoff    │
+                                                     └──────────┬───────────┘
+                                                               ▼
+                                                     ┌──────────────────────┐
+                                                     │  Run store          │
+                                                     │  (traces, payloads, │
+                                                     │   step outputs)     │
+                                                     └──────────────────────┘
 ```
 
-## What's inside?
+The execution engine **is** a distributed job runner: jobs are enqueued with a dedupe key, picked up by workers, executed with retry/backoff, and every mutation is recorded into the run store. The same reliability primitives that make this correct (idempotency, backoff, atomic state transitions) are the ones payment-retry systems depend on — it's the same problem class.
 
-This Turborepo includes the following packages/apps:
+## Data model (anchor)
 
-### Apps and Packages
+- **Workflow** — id, name, trigger config, list of steps, enabled state, version.
+- **Step** — id, type (action/filter), config, position in the DAG.
+- **Run** — id, workflow version, trigger payload (stored in full), status (`pending → running → succeeded/failed`), timestamps.
+- **StepRun** — id, run id, step id, input payload, output payload, status, error, duration.
+- **Replay** — id, original run id, new run id; marks the re-run's provenance so replays are auditable.
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+## Tech stack
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+- **Monorepo:** Turborepo + bun, shared `@repo/ui`, `@repo/typescript-config`, `@repo/eslint-config`
+- **Apps:** `apps/web` (dashboard + workflow builder + run traces), `apps/docs` (design notes)
+- **Runtime:** Next.js (planned), Redis-backed queue (planned), Postgres (planned)
+- **Worker + API:** TypeScript, single language across the stack
 
-### Utilities
+## Documentation
 
-This Turborepo has some additional tools already setup for you:
+The full design — architecture, data model, execution engine, observability/replay, API, decisions, and scaling — lives in [docs/](docs/README.md). Read it before writing code; the whole system was designed up front.
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+## Getting started
 
 ```sh
-cd my-turborepo
-turbo build
+bun install
+bun run dev        # or: bun run dev --filter=web
 ```
 
-Without global `turbo`, use your package manager:
+> Work in progress — the monorepo scaffold is in place; the engine is not built yet. See [docs/09-roadmap.md](docs/09-roadmap.md) for the build order.
 
-```sh
-cd my-turborepo
-npx turbo build
-bun dlx turbo build
-bun exec turbo build
-```
+## Roadmap
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+1. **Engine MVP** — trigger → queue → worker → action, retries, idempotency, run store
+2. **Observability** — per-run traces in the UI, step-level payload inspection
+3. **Replay** — replay endpoint + UI, provenance tracking
+4. **Apps** — OAuth integrations, form trigger, email/Slack/Discord actions
+5. **Extras** — dry-run mode, custom code step, self-host via Docker Compose
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+## Scripts
 
-```sh
-turbo build --filter=docs
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo build --filter=docs
-bun exec turbo build --filter=docs
-bun exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-bun exec turbo dev
-bun exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-bun exec turbo dev --filter=web
-bun exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-bun exec turbo login
-bun exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-bun exec turbo link
-bun exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+| Command | Purpose |
+|---|---|
+| `bun run dev` | Run all apps in dev mode |
+| `bun run build` | Build all apps and packages |
+| `bun run lint` | Lint all apps and packages |
+| `bun run check-types` | Type-check all apps and packages |
+| `bun run format` | Format all source files |
