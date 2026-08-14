@@ -1,1 +1,1 @@
-export * as db from "./generated/prisma/client";
+export * from "./generated/prisma/client";

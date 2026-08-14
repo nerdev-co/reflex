@@ -108,11 +108,11 @@ async function seedRegistry() {
 }
 
 async function seedDemoData() {
-  const passwordHash = await Bun.password.hash("demo123", { algorithm: "argon2id" });
+  const passwordHash = await Bun.password.hash("demo1234", { algorithm: "argon2id" });
 
   const user = await prisma.user.upsert({
     where: { email: "demo@reflex.dev" },
-    update: {},
+    update: { passwordHash },
     create: { email: "demo@reflex.dev", passwordHash },
   });
 
@@ -379,7 +379,7 @@ async function seedDemoData() {
 async function main() {
   await seedRegistry();
   await seedDemoData();
-  console.log("Seed complete ✔  (demo login: demo@reflex.dev / demo123)");
+  console.log("Seed complete ✔  (demo login: demo@reflex.dev / demo1234)");
 }
 
 main()
