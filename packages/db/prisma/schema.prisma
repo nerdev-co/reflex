@@ -203,6 +203,7 @@ model StepRun {
     startedAt     DateTime?
     finishedAt    DateTime?
     nextAttemptAt DateTime? // retry schedule — the reaper's clock
+    position      Int? // index in the version definition (1-based); the worker's DAG order
 
     runId String
     run   ZapRun @relation(fields: [runId], references: [id], onDelete: Cascade)

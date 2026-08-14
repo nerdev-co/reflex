@@ -21,6 +21,9 @@ export const config: Linter.Config[] = [
     },
     rules: {
       "turbo/no-undeclared-env-vars": "warn",
+      // Rest-sibling destructuring (`{ config, ...rest }`) is a common way to
+      // strip a key from a payload; the stripped name is intentionally unused.
+      "@typescript-eslint/no-unused-vars": ["warn", { ignoreRestSiblings: true }],
     },
   },
   {
