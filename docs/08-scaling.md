@@ -36,6 +36,9 @@ webhook burst ──► api/trigger ──► Redis queue ──► worker x N (
 
 Scale workers by:
 - **No state on the worker** (already true by design — retries live in the DB).
+- **The outbox poller scales like a worker**: batch (10 rows/tick) + more poller
+  instances behind the same delete-after-ack guarantee; the `run_id` unique
+  constraint absorbs duplicates.
 - **Partition keys on jobs**: `runId` as the partition key, so a run's steps execute in order on one worker, and different runs parallelize.
 
 ## Stage 2 — horizontal workers + sharded reaper

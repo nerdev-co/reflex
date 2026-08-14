@@ -4,20 +4,24 @@ The engine is a scoped distributed job runner. This document is the complete exe
 
 ## The job message
 
-Every step of the DAG is its own job. One shape, three producers (webhook path, poll scheduler, replay):
+Every step of the DAG is its own job. One shape, four producers (webhook path, the scheduler's poll/schedule loop, full replay, replay-from-step):
 
 ```
 Job = { runId, stepId }
 ```
 
-The webhook path produces the first job:
+The webhook path produces the first job through the **outbox** (docs/02):
 
 1. `POST /hooks/wh_{uuid}` → HMAC validated
-2. `INSERT zap_runs (trigger_payload = raw body)`
+2. ONE transaction: `INSERT zap_runs (trigger_payload = raw body)`
 3. `INSERT step_runs` (step 1, `queued`)
-4. `enqueue { runId, stepId }`
+4. `INSERT zap_run_outbox (run_id, step_id)` ← the durability seam
+5. The worker's **outbox poller** (3s tick, batch 10) does
+   `enqueue { runId, stepId }` → `DELETE` the row — **delete AFTER the
+   enqueue lands**, so a crash between 4 and 5 retries the row next tick,
+   and the claim absorbs any duplicate.
 
-**The run exists before anything executes.** That is what makes traces truthful.
+**The run exists before anything executes.** That is what makes traces truthful. The publish path is idempotent by construction: the outbox row is the only thing between "committed" and "delivered", and exactly-once execution emerges from the claim.
 
 ## The consume loop
 
@@ -140,6 +144,54 @@ You cannot close this window — a sent request whose response vanished is indis
 - A run's final status is decided **only when its last step terminates** — success chains the DAG (insert next `step_run`, enqueue), failure at any step ⇒ run `failed`.
 - Runs are **immutable history**. Replays create new runs; the original is never mutated.
 - Replay semantics are fully specified in [observability-and-replay](05-observability-and-replay.md).
+
+## Engine utilities — filter, delay, formatter, per-step retry policy
+
+The status machine above extends with two engine hooks and one builder knob;
+the invariants (claim is the only lock, trace is append-only) never change.
+
+### `evaluate` — a step may *end* the run without failing
+
+`ActionDef.operation.evaluate?.(output)` is called after a successful
+`perform`. Default `{ continue: true }`. A filter step returns
+`{ continue: false, terminal: "FILTERED" }` when its condition is false:
+
+- the step is **SUCCEEDED** (it did its job — test the condition) and its
+  `{ matched: false }` output is recorded;
+- the run ends **FILTERED** (new `RunStatus`) — not an error, so no retry,
+  no dead-letter, no `run_failed`;
+- downstream steps are **never inserted** (the DAG is walked lazily), so the
+  trace stops exactly where the filter stopped it;
+- events: `step_filtered`, `run_filtered`. Replay re-evaluates the identical
+  recorded input — a filter can never behave differently on replay.
+
+### `schedules` — delay as a state, not a thread
+
+`ActionDef.schedules: true` (delay step) changes what a successful `perform`
+means: instead of chaining, the worker parks the step in **WAITING** with
+`nextAttemptAt` set to the returned `until`, and emits `delay_scheduled`.
+The reaper's existing "due" query picks up WAITING rows, flips them back to
+`queued` (`delay_enqueued`), and re-enqueues. The claim then runs the
+**resume path**: if a claimed step's latest attempt already has output and no
+error, the worker completes the chain (`delay_elapsed`, then `step_succeeded`)
+without re-performing — so a delay's side effects happen exactly once, and a
+crashed worker only delays the resume, never double-fires it.
+
+The single attempt spans the whole wait; `attemptCount` stays 1. The same
+resume rule also heals the crash window between *record* and *chain* for any
+step (`step_resumed`). Constraints: perform must return a valid ISO `until`,
+the total delay is capped at 24h, and `perform` must never sleep — the wait
+lives in the row, not in a process.
+
+### `meta.retry` — per-step policy from the builder
+
+`steps[].meta.retry = { maxAttempts?, continueOnError? }` in the version
+snapshot (sent by the builder, validated by the API, stored on `Step.meta`).
+`maxAttempts` gates the retry/backoff state machine (default stays 3);
+`continueOnError` turns the *terminal* failure path into "fail honestly, keep
+going" — the step is `FAILED` and traced (`step_failed`, then
+`step_failed_continued`), the run continues (or completes) without a
+`run_failed`.
 
 ## Related
 

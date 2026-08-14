@@ -18,7 +18,7 @@ The point where "it's a design" becomes "it runs."
 ## Phase 2 — Actions and triggers to locked scope
 
 - Actions: Slack/Discord message, email (SMTP). All via `packages/integrations` — worker unchanged.
-- Triggers: schedule (cron, engine-initiated path), form submit (`/hooks/form_{uuid}`).
+- Triggers: schedule (interval — done; cron-expression parsing is future work), form submit (`/hooks/form_{uuid}` — done).
 - Credentials: encrypted at rest, decrypted in worker, never in traces.
 
 **Exit condition:** all three triggers × three actions work end to end, and adding a new action is provably a registry-only change.

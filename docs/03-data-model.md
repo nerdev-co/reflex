@@ -9,11 +9,14 @@ The schema is the anchor of the project: every component reads and writes these 
 ## 1. Identity & auth
 
 ```sql
-users     id PK, email UNIQUE, password_hash, created_at
-sessions  id PK, user_id FK, token_hash UNIQUE, expires_at, created_at
+users            id PK, email UNIQUE, password_hash, name, verified_at,
+                 otp_hash, otp_expires_at
+sessions         id PK, user_id FK, token_hash UNIQUE, expires_at, created_at
+refresh_tokens   id PK, user_id FK, token_hash UNIQUE, expires_at, revoked_at,
+                 created_at
 ```
 
-Simple on purpose. Passwords argon2id-hashed; sessions are server-side rows behind an httpOnly cookie (revocable, no JWT dance). Every query is scoped `WHERE user_id = <session.user_id>`.
+Passwords argon2id-hashed; sessions are server-side rows behind an httpOnly cookie (the browser fallback). API clients use HMAC access tokens (15 min) + rotated, single-use refresh tokens — hashed at rest, revoked by reset/logout. The email-OTP forgot flow stores only a hash of the 6-digit code with a 10-minute expiry. Every query is scoped `WHERE user_id = <resolved user>`.
 
 ## 2. Configuration
 
@@ -36,8 +39,10 @@ available_actions  key PK, noun, idempotent_safe BOOL, metadata JSONB
                    -- mirrors packages/integrations registry; synced at deploy
 
 trigger_states     id PK, workflow_id FK, kind ('cursor'|'subscription'),
-                   state JSONB, updated_at
-                   -- poll cursors (last-seen ids) and webhook subscriptions
+                   item_id TEXT, state JSONB, updated_at
+                   -- UNIQUE(workflow_id, item_id) IS the dedup claim: the
+                   -- scheduler's INSERT either wins (publish the run in the
+                   -- same transaction) or hits P2002 (item already seen)
 
 credentials        id PK, user_id FK, action_key, label, config JSONB,
                    created_at
@@ -52,9 +57,15 @@ credentials        id PK, user_id FK, action_key, label, config JSONB,
 zap_runs
   id PK, workflow_id FK, workflow_version INT FK,
   trigger_key, trigger_payload JSONB,   -- FULL incoming payload, verbatim
-  status ('pending'|'running'|'succeeded'|'failed'),
+  status ('pending'|'running'|'succeeded'|'failed'|'filtered'|'superseded'),
   replay_of_run_id NULL FK,             -- provenance: set only on replays
   created_at, started_at, finished_at
+
+zap_run_outbox        -- the durability seam (docs/02): the run's first job
+  id PK, run_id UNIQUE FK, step_id FK, created_at
+                      -- written in the SAME transaction as the run; the
+                      -- worker's poller forwards it to the queue and DELETES
+                      -- it after the enqueue lands (delete-after-ack)
 
 step_runs
   id PK, run_id FK, step_id FK, step_key,
@@ -97,9 +108,9 @@ Three deliberate choices:
 
 ## Statuses, enumerated
 
-**Step statuses:** `queued → running → (succeeded | retrying → queued … | failed | superseded)`. `skipped` is terminal-but-inherited; `superseded` means cancelled-by-replay (its pending retry must not fire).
+**Step statuses:** `queued → running → (succeeded | retrying → queued … | waiting → queued … | failed | superseded)`. `waiting` is the delay park (docs/04 — one attempt spans the wait); `skipped` is terminal-but-inherited; `superseded` means cancelled-by-replay (its pending retry must not fire). `Step.meta` holds builder execution policy (`retry.maxAttempts`, `retry.continueOnError`) and is snapshotted into the version definition alongside `config`.
 
-**Run status:** derived only from the DAG tail — a run reaches a final status *when its last step terminates*. A failed step ⇒ `failed` even if earlier steps succeeded. Replays never mutate the original run: it stays as history, with a `replay_of_run_id` pointer the other way.
+**Run status:** derived only from the DAG tail — a run reaches a final status *when its last step terminates*. A failed step ⇒ `failed` even if earlier steps succeeded; a filter step's `evaluate` hook can end the run as `filtered` (a step-level decision, not an error — never retried). Replays never mutate the original run: it stays as history, with a `replay_of_run_id` pointer the other way.
 
 ## Related
 

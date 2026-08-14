@@ -42,9 +42,9 @@ Actions/triggers are declarative definitions (`inputFields`, `sample`, `perform`
 
 The trace stores the *resolved* input per attempt, not the template. Interpolation failures become visible, replay is deterministic, and "what actually happened" is never ambiguous.
 
-## ADR-10: Email + password, server-side sessions — not JWT
+## ADR-10: Email + password — sessions AND a no-JWT token ladder
 
-Simple, revocable, no refresh dance. JWT buys statelessness one server doesn't need. OAuth connections for third-party actions are a separate mechanism (credentials table), decoupled from user auth.
+Sessions are server-side rows behind an httpOnly cookie: revocable, no JWT library. For API clients that can't take cookies, access tokens are stateless **HMAC envelopes** (node:crypto, 15 min — still no JWT dependency), paired with rotated single-use refresh tokens (hashed at rest, revoked by reset/logout). OAuth connections for third-party actions are a separate mechanism (credentials table), decoupled from user auth.
 
 ## ADR-11: Webhook secrets, not session auth, for hooks
 
