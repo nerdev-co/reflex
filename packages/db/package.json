@@ -6,6 +6,7 @@
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "studio": "prisma studio",
+    "seed": "prisma db seed",
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {
