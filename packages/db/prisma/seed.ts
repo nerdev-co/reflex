@@ -6,7 +6,7 @@
 //   2. Demo user + workflows with steps
 //   3. One FAILED run with full trace (attempts, events) so the trace UI
 //      has something to render on day one
-import { PrismaClient } from "../src/generated/prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
 
 const prisma = new PrismaClient();
 

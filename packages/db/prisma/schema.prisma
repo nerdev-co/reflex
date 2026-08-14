@@ -4,8 +4,8 @@
 //  - Runs are immutable history — run tables never cascade from config tables.
 
 generator client {
-    provider = "prisma-client"
-    output   = "../src/generated/prisma"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
